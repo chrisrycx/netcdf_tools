@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=42"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "netcdf_tools"
+version = "0.1.0"
+description = "Utilities for inspecting, extracting, and processing NetCDF files"
+requires-python = ">=3.10"
+dependencies = [
+    "netCDF4",
+    "numpy",
+    "pandas",
+    "xarray",
+    "cftime",
+]
+
+[project.optional-dependencies]
+regrid = ["xesmf"]
+spires = ["rioxarray", "rasterio"]
+
+[project.scripts]
+nct-inspect = "netcdf_tools.inspect:main"
+nct-extract = "netcdf_tools.extract:main"
+nct-timeseries = "netcdf_tools.timeseries:main"
+nct-regrid = "netcdf_tools.regrid:main"
+nct-spires = "netcdf_tools.spires:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["netcdf_tools*"]
