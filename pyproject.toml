@@ -25,6 +25,7 @@ nct-extract = "netcdf_tools.extract:main"
 nct-timeseries = "netcdf_tools.timeseries:main"
 nct-regrid = "netcdf_tools.regrid:main"
 nct-spires = "netcdf_tools.spires:main"
+nct-getgrid = "netcdf_tools.regrid.getgrid:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

@@ -1,0 +1,9 @@
+{
+  "source_file": "domain_WUS_0125_c260113.nc",
+  "grid_type": "regular",
+  "south": 32.0,
+  "north": 50.0,
+  "west": 235.0,
+  "east": 256.0,
+  "resolution": 0.125
+}
