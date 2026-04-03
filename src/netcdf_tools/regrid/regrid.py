@@ -2,34 +2,84 @@
 """
 Conservative Regridding Utility
 Regrids variables from an input NetCDF file (or all NetCDF files in a directory)
-to the lat/lon grid of a target NetCDF using xesmf.
+to the lat/lon grid defined by a JSON grid spec using xesmf.
 
 Install extra dependencies with: pip install netcdf_tools[regrid]
 """
 
+import json
 import sys
 from pathlib import Path
 
+import numpy as np
 
-def regrid(input_file, target_file, output_file, variables=None, method="conservative"):
+
+def load_data(input_path, data_type):
     """
-    Regrid variables from input_file to the grid defined in target_file.
+    Load input data for regridding, dispatching on data_type.
+
+    Parameters
+    ----------
+    input_path : str or Path
+    data_type : str
+        'spires' — load using the SPIReS tile pipeline.
+        Any other value returns an empty Dataset (placeholder).
+
+    Returns
+    -------
+    xarray.Dataset
+    """
+    if data_type == "spires":
+        from netcdf_tools.regrid.spires import load_spires
+        return load_spires(input_path)
+
+    import xarray as xr
+    return xr.Dataset()
+
+
+def load_grid_spec(grid_json_path):
+    """
+    Load a JSON grid spec and return a Dataset with lat/lon center coordinates.
+
+    Parameters
+    ----------
+    grid_json_path : str or Path
+        Path to a JSON file with keys: south, north, west, east, resolution.
+
+    Returns
+    -------
+    xarray.Dataset
+        Dataset with 1-D 'lat' and 'lon' coordinate arrays (cell centers).
+    """
+    import xarray as xr
+
+    spec = json.loads(Path(grid_json_path).read_text())
+    res = spec["resolution"]
+    lat_centers = np.arange(spec["south"] + res / 2, spec["north"], res)
+    lon_centers = np.arange(spec["west"]  + res / 2, spec["east"],  res)
+    return xr.Dataset({"lat": lat_centers, "lon": lon_centers})
+
+
+def regrid(input_file, grid_json, output_file, data_type=None, variables=None, method="conservative"):
+    """
+    Regrid variables from input_file to the grid defined in grid_json.
 
     Parameters
     ----------
     input_file : str or Path
-        Path to the input NetCDF file.
-    target_file : str or Path
-        Path to the NetCDF file whose lat/lon grid defines the output grid.
+        Path to the input data (file or directory, depending on data_type).
+    grid_json : str or Path
+        Path to the JSON grid-spec file (e.g. grids/e3sm0125.json).
     output_file : str or Path
         Path to write the regridded NetCDF file.
+    data_type : str, optional
+        Dataset type passed to load_data (e.g. 'spires').
     variables : list of str, optional
         Variables to regrid. If None, all non-coordinate data variables are regridded.
     method : str
         xesmf regridding method. Default is "conservative".
     """
     try:
-        import xarray as xr
         import xesmf as xe
     except ImportError:
         raise ImportError(
@@ -39,20 +89,15 @@ def regrid(input_file, target_file, output_file, variables=None, method="conserv
         )
 
     print(f"Input file:  {input_file}")
-    print(f"Target grid: {target_file}")
+    print(f"Target grid: {grid_json}")
     print(f"Output file: {output_file}")
     print(f"Method:      {method}")
 
-    ds_in = xr.open_dataset(input_file)
-    ds_target = xr.open_dataset(target_file)
-
-    ds_out = xr.Dataset({
-        "lat": ds_target["lat"],
-        "lon": ds_target["lon"],
-    })
+    ds_in = load_data(input_file, data_type)
+    ds_out = load_grid_spec(grid_json)
 
     print(f"\nInput grid:  {len(ds_in.lat)} lat x {len(ds_in.lon)} lon")
-    print(f"Output grid: {len(ds_out.lat)} lat x {len(ds_out.lon)} lon")
+    print(f"Output grid: {len(ds_out['lat'])} lat x {len(ds_out['lon'])} lon")
 
     if variables is None:
         variables = list(ds_in.data_vars)
@@ -97,7 +142,7 @@ def main():
         description="Conservative regridding utility. Input can be a single file or a directory of NetCDF files."
     )
     parser.add_argument("input", help="Input NetCDF file or directory of NetCDF files")
-    parser.add_argument("target_file", help="NetCDF file whose lat/lon grid defines the output grid")
+    parser.add_argument("grid_json", help="JSON grid-spec file (e.g. grids/e3sm0125.json)")
     parser.add_argument("output_dir", help="Directory to write regridded output files")
     parser.add_argument(
         "--suffix",
@@ -105,17 +150,18 @@ def main():
         help="String to append to each input filename (before extension) for the output filename (default: '_regridded')",
     )
     parser.add_argument("--variables", nargs="*", help="Variables to regrid (default: all)")
+    parser.add_argument("--data-type", default=None, help="Dataset type for loading (e.g. 'spires')")
     args = parser.parse_args()
 
     input_path = Path(args.input)
-    target_file = args.target_file
+    grid_json = Path(args.grid_json)
     output_dir = Path(args.output_dir)
 
     if not input_path.exists():
         print(f"Error: Input not found: {input_path}")
         sys.exit(1)
-    if not Path(target_file).exists():
-        print(f"Error: Target file not found: {target_file}")
+    if not grid_json.exists():
+        print(f"Error: Grid spec not found: {grid_json}")
         sys.exit(1)
 
     if input_path.is_dir():
@@ -135,7 +181,7 @@ def main():
             if response.lower() != "y":
                 print(f"Skipping {input_file.name}")
                 continue
-        regrid(input_file, target_file, output_file, args.variables)
+        regrid(input_file, grid_json, output_file, args.data_type, args.variables)
 
 
 if __name__ == "__main__":
