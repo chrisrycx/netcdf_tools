@@ -14,7 +14,7 @@ from pathlib import Path
 import numpy as np
 
 
-def load_data(input_path, data_type):
+def load_data(input_path, data_type, target_date=None, tiles=None):
     """
     Load input data for regridding, dispatching on data_type.
 
@@ -24,6 +24,10 @@ def load_data(input_path, data_type):
     data_type : str
         'spires' — load using the SPIReS tile pipeline.
         Any other value returns an empty Dataset (placeholder).
+    target_date : datetime.date, optional
+        Required for data types that load a single date (e.g. 'spires').
+    tiles : list of str, optional
+        Tile identifiers required for 'spires' (e.g. ['h09v04', 'h09v05']).
 
     Returns
     -------
@@ -31,7 +35,11 @@ def load_data(input_path, data_type):
     """
     if data_type == "spires":
         from netcdf_tools.regrid.spires import load_spires
-        return load_spires(input_path)
+        if target_date is None:
+            raise ValueError("target_date is required for data_type='spires'")
+        if tiles is None:
+            raise ValueError("tiles is required for data_type='spires'")
+        return load_spires(input_path, target_date, tiles)
 
     import xarray as xr
     return xr.Dataset()

@@ -45,20 +45,41 @@ def _parse_date(filename: str) -> Optional[date]:
     return datetime.strptime(m.group("date"), "%Y%m%d").date()
 
 
-def _group_files_by_date(input_dir: Path) -> dict[date, list[Path]]:
-    """Scan *input_dir* and return {date: [path, ...]} for all matching files."""
-    groups: dict[date, list[Path]] = {}
-    for path in sorted(input_dir.glob("SPIRES_HIST_*.nc")):
-        d = _parse_date(path.name)
-        if d is not None:
-            groups.setdefault(d, []).append(path)
-    return groups
-
-
-def _read_tile(path: Path, variable: str):
+def _find_tile_files(input_dir: Path, tiles: list[str], target_date: date) -> list[Path]:
     """
-    Open one SPIReS tile and return the requested variable as a float32
-    DataArray with the sinusoidal CRS attached and fill values as NaN.
+    Search each tile subdirectory for the file matching *target_date*.
+
+    Parameters
+    ----------
+    input_dir : Path
+        Root directory containing one subdirectory per tile (e.g. 'h09v04/').
+    tiles : list of str
+        Tile identifiers to search (e.g. ['h09v04', 'h09v05']).
+    target_date : date
+        Date to look for.
+
+    Returns
+    -------
+    list of Path
+        One path per tile that has a matching file. Logs a warning for any
+        tile where no file is found.
+    """
+    date_str = target_date.strftime("%Y%m%d")
+    found: list[Path] = []
+    for tile in tiles:
+        tile_dir = input_dir / tile
+        matches = sorted(tile_dir.glob(f"SPIRES_HIST_*_{date_str}_V*.nc"))
+        if not matches:
+            log.warning("No file found for tile %s on %s in %s", tile, target_date, tile_dir)
+        else:
+            found.append(matches[0])
+    return found
+
+
+def _read_tile(path: Path):
+    """
+    Open one SPIReS tile and return all data variables as a float32 Dataset
+    with the sinusoidal CRS attached and fill values as NaN.
     """
     try:
         import xarray as xr
@@ -70,30 +91,29 @@ def _read_tile(path: Path, variable: str):
         )
 
     ds = xr.open_dataset(path, masked=True)
-
-    if variable not in ds:
-        raise KeyError(
-            f"Variable '{variable}' not found in {path.name}. "
-            f"Available: {list(ds.data_vars)}"
-        )
-
-    da = ds[variable].squeeze(drop=True)
-    da.encoding["dtype"] = da.encoding.get("dtype") or str(da.dtype)
-    da = da.astype(np.float32)
-
     proj4 = str(ds["crs"].attrs["proj4"])
-    da = da.rio.write_crs(proj4)
-    da = da.rio.set_spatial_dims(x_dim="x", y_dim="y")
+
+    arrays = {}
+    for var in ds.data_vars:
+        if var == "crs":
+            continue
+        da = ds[var].squeeze(drop=True)
+        da.encoding["dtype"] = da.encoding.get("dtype") or str(da.dtype)
+        arrays[var] = da.astype(np.float32)
 
     ds.close()
-    return da
+
+    ds_out = xr.Dataset(arrays)
+    ds_out = ds_out.rio.write_crs(proj4)
+    ds_out = ds_out.rio.set_spatial_dims(x_dim="x", y_dim="y")
+    return ds_out
 
 
-def _load_day(tile_paths: list[Path], variable: str):
+def _load_day(tile_paths: list[Path]):
     """
     Mosaic all tiles for one day and reproject to EPSG:4326.
 
-    Returns a DataArray with dims (time, lat, lon).
+    Returns a Dataset with dims (time, lat, lon).
     """
     try:
         from rioxarray.merge import merge_arrays
@@ -107,8 +127,21 @@ def _load_day(tile_paths: list[Path], variable: str):
     day = _parse_date(tile_paths[0].name)
     log.info("Loading %s (%d tile(s))", day, len(tile_paths))
 
-    arrays = [_read_tile(p, variable) for p in tile_paths]
-    mosaic = merge_arrays(arrays, method="first") if len(arrays) > 1 else arrays[0]
+    tile_datasets = [_read_tile(p) for p in tile_paths]
+
+    if len(tile_datasets) == 1:
+        mosaic = tile_datasets[0]
+    else:
+        crs = tile_datasets[0].rio.crs
+        variables = list(tile_datasets[0].data_vars)
+        mosaicked = {
+            var: merge_arrays([ds[var] for ds in tile_datasets], method="first")
+            for var in variables
+        }
+        import xarray as xr
+        mosaic = xr.Dataset(mosaicked)
+        mosaic = mosaic.rio.write_crs(crs)
+        mosaic = mosaic.rio.set_spatial_dims(x_dim="x", y_dim="y")
 
     buffer = 2.0
     mosaic_4326 = mosaic.rio.reproject(
@@ -135,21 +168,20 @@ def _load_day(tile_paths: list[Path], variable: str):
 
 def load_spires(
     input_dir,
-    variable: str = "snow_fraction",
-    start_date: Optional[date] = None,
-    end_date: Optional[date] = None,
+    target_date: date,
+    tiles: list[str],
 ):
     """
-    Load SPIReS tiles, mosaic by date, and reproject to EPSG:4326.
+    Load SPIReS tiles for a single date, mosaic, and reproject to EPSG:4326.
 
     Parameters
     ----------
     input_dir : str or Path
-        Directory containing SPIRES_HIST_*.nc tile files.
-    variable : str
-        Data variable to extract (default: 'snow_fraction').
-    start_date, end_date : date, optional
-        Inclusive date range filter.
+        Root directory containing one subdirectory per tile (e.g. 'h09v04/').
+    target_date : date
+        The date to load.
+    tiles : list of str
+        Tile identifiers to load (e.g. ['h09v04', 'h09v05']).
 
     Returns
     -------
@@ -157,25 +189,11 @@ def load_spires(
         Dataset with dimensions (time, lat, lon) in EPSG:4326,
         ready for regridding to a target grid.
     """
-    import xarray as xr
+    tile_paths = _find_tile_files(Path(input_dir), tiles, target_date)
+    if not tile_paths:
+        raise ValueError(
+            f"No SPIRES files found for date {target_date} "
+            f"in any of the requested tiles: {tiles}"
+        )
 
-    groups = _group_files_by_date(Path(input_dir))
-    if not groups:
-        raise ValueError(f"No matching SPIRES files found in {input_dir}")
-
-    if start_date:
-        groups = {d: v for d, v in groups.items() if d >= start_date}
-    if end_date:
-        groups = {d: v for d, v in groups.items() if d <= end_date}
-    if not groups:
-        raise ValueError("No files remain after applying date filter.")
-
-    log.info("Loading %d date(s).", len(groups))
-
-    daily_arrays = [
-        _load_day(paths, variable)
-        for _, paths in sorted(groups.items())
-    ]
-
-    combined = xr.concat(daily_arrays, dim="time")
-    return combined.to_dataset(name=variable)
+    return _load_day(tile_paths)
