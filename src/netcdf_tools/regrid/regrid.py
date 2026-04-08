@@ -15,7 +15,7 @@ import numpy as np
 import xarray as xr
 
 
-def load_data(input_path, data_type, target_date=None, tiles=None):
+def load_data(input_path, data_type, target_date=None, west=None, east=None, south=None, north=None):
     """
     Load input data for regridding, dispatching on data_type.
 
@@ -27,8 +27,8 @@ def load_data(input_path, data_type, target_date=None, tiles=None):
         Any other value returns an empty Dataset (placeholder).
     target_date : datetime.date, optional
         Required for data types that load a single date (e.g. 'spires').
-    tiles : list of str, optional
-        Tile identifiers required for 'spires' (e.g. ['h09v04', 'h09v05']).
+    west, east, south, north : float, optional
+        Spatial extent in degrees; required for 'spires'.
 
     Returns
     -------
@@ -38,9 +38,9 @@ def load_data(input_path, data_type, target_date=None, tiles=None):
         from netcdf_tools.regrid.spires import load_spires
         if target_date is None:
             raise ValueError("target_date is required for data_type='spires'")
-        if tiles is None:
-            raise ValueError("tiles is required for data_type='spires'")
-        return load_spires(input_path, target_date, tiles)
+        if any(b is None for b in (west, east, south, north)):
+            raise ValueError("west, east, south, north are all required for data_type='spires'")
+        return load_spires(input_path, target_date, west, east, south, north)
 
     import xarray as xr
     return xr.Dataset()
@@ -69,7 +69,8 @@ def load_grid_spec(grid_json_path):
     return xr.Dataset({"lat": lat_centers, "lon": lon_centers})
 
 
-def regrid(input_file, grid_json, output_file, data_type=None, variables=None, method="conservative", target_date=None, tiles=None):
+def regrid(input_file, grid_json, output_file, data_type=None, variables=None, method="conservative",
+           target_date=None):
     """
     Regrid variables from input_file to the grid defined in grid_json.
 
@@ -89,8 +90,6 @@ def regrid(input_file, grid_json, output_file, data_type=None, variables=None, m
         xesmf regridding method. Default is "conservative".
     target_date : datetime.date, optional
         Single date to load; required for 'spires'.
-    tiles : list of str, optional
-        Tile identifiers to load; required for 'spires' (e.g. ['h09v04', 'h09v05']).
     """
     try:
         import xesmf as xe
@@ -106,7 +105,15 @@ def regrid(input_file, grid_json, output_file, data_type=None, variables=None, m
     print(f"Output file: {output_file}")
     print(f"Method:      {method}")
 
-    ds_in = load_data(input_file, data_type, target_date=target_date, tiles=tiles)
+    spec = json.loads(Path(grid_json).read_text())
+    # Normalize longitudes to -180/180 in case the spec uses 0-360 convention
+    west  = spec["west"]  if spec["west"]  <= 180 else spec["west"]  - 360
+    east  = spec["east"]  if spec["east"]  <= 180 else spec["east"]  - 360
+    south = spec["south"]
+    north = spec["north"]
+
+    ds_in = load_data(input_file, data_type, target_date=target_date,
+                      west=west, east=east, south=south, north=north)
     ds_out = load_grid_spec(grid_json)
 
     print(f"\nInput grid:  {len(ds_in.lat)} lat x {len(ds_in.lon)} lon")

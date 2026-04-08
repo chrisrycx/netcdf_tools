@@ -6,5 +6,5 @@ from netcdf_tools.regrid.spires import load_spires
 
 spires_path = "/mnt/c/Users/clmbn/NMT_PhD/data/MODIS/SPIRES/raw/"
 
-ds = load_spires(spires_path, date(2025, 2, 1), ["h09v04", "h09v05"])
+ds = load_spires(spires_path, date(2025, 2, 1), west=-125.0, east=-100.0, south=30.0, north=50.0)
 print(ds)

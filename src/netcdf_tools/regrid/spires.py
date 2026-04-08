@@ -9,6 +9,7 @@ Install extra dependencies with: pip install netcdf_tools[spires]
 """
 
 import logging
+import math
 import re
 from datetime import datetime, date
 from pathlib import Path
@@ -27,12 +28,6 @@ FILENAME_RE = re.compile(
     r"(?P<date>\d{8})_V\d+\.\d+\.nc$"
 )
 
-# Western US bounding box (cell edges) used for clipping after reprojection
-WEST_LON = -125.0
-EAST_LON = -100.0
-SOUTH_LAT = 30.0
-NORTH_LAT = 50.0
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -45,24 +40,46 @@ def _parse_date(filename: str) -> Optional[date]:
     return datetime.strptime(m.group("date"), "%Y%m%d").date()
 
 
+def _tiles_for_bounds(west: float, east: float, south: float, north: float) -> list[str]:
+    """
+    Return MODIS sinusoidal tile names that overlap the given lat/lon bounding box.
+
+    The MODIS grid has 36 columns (h00–h35) and 18 rows (v00–v17). Each tile
+    spans 10° in the sinusoidal y-axis (latitude). In geographic lon, the tile
+    width widens toward the poles, so we check both the northern and southern
+    edge of each row to conservatively capture all overlapping tiles.
+    """
+    # v_min: northernmost row whose southern edge is above our bbox south boundary.
+    # floor((90-north)/10) gives the first v row whose northern edge <= north.
+    v_min = max(0, math.floor((90.0 - north) / 10.0))
+    # v_max: southernmost row whose northern edge is strictly above our bbox south boundary.
+    # ceil((90-south)/10) - 1 avoids including a row that only touches south at its northern edge.
+    v_max = min(17, math.ceil((90.0 - south) / 10.0) - 1)
+
+    tiles = []
+    for v in range(v_min, v_max + 1):
+        lat_n = 90.0 - v * 10.0
+        lat_s = 90.0 - (v + 1) * 10.0
+        # Avoid division by zero at the poles
+        cos_n = max(math.cos(math.radians(lat_n)), 1e-9)
+        cos_s = max(math.cos(math.radians(lat_s)), 1e-9)
+
+        for h in range(36):
+            # Geographic lon of this tile's left/right edges at north and south latitudes.
+            # Sinusoidal formula: lon = (h * 10 - 180) / cos(lat)
+            tile_west = min((h * 10.0 - 180.0) / cos_n, (h * 10.0 - 180.0) / cos_s)
+            tile_east = max(((h + 1) * 10.0 - 180.0) / cos_n, ((h + 1) * 10.0 - 180.0) / cos_s)
+            if tile_west <= east and tile_east >= west:
+                tiles.append(f"h{h:02d}v{v:02d}")
+
+    return tiles
+
+
 def _find_tile_files(input_dir: Path, tiles: list[str], target_date: date) -> list[Path]:
     """
     Search each tile subdirectory for the file matching *target_date*.
 
-    Parameters
-    ----------
-    input_dir : Path
-        Root directory containing one subdirectory per tile (e.g. 'h09v04/').
-    tiles : list of str
-        Tile identifiers to search (e.g. ['h09v04', 'h09v05']).
-    target_date : date
-        Date to look for.
-
-    Returns
-    -------
-    list of Path
-        One path per tile that has a matching file. Logs a warning for any
-        tile where no file is found.
+    Returns one path per tile found. Logs a warning for any tile with no file.
     """
     date_str = target_date.strftime("%Y%m%d")
     found: list[Path] = []
@@ -109,9 +126,9 @@ def _read_tile(path: Path):
     return ds_out
 
 
-def _load_day(tile_paths: list[Path]):
+def _load_day(tile_paths: list[Path], west: float, east: float, south: float, north: float):
     """
-    Mosaic all tiles for one day and reproject to EPSG:4326.
+    Mosaic all tiles for one day, reproject to EPSG:4326, and clip to bounds.
 
     Returns a Dataset with dims (time, lat, lon).
     """
@@ -150,10 +167,10 @@ def _load_day(tile_paths: list[Path]):
         nodata=np.nan,
     )
     mosaic_4326 = mosaic_4326.rio.clip_box(
-        minx=WEST_LON - buffer,
-        maxx=EAST_LON + buffer,
-        miny=SOUTH_LAT - buffer,
-        maxy=NORTH_LAT + buffer,
+        minx=west - buffer,
+        maxx=east + buffer,
+        miny=south - buffer,
+        maxy=north + buffer,
     )
 
     mosaic_4326 = mosaic_4326.rename({"x": "lon", "y": "lat"})
@@ -169,7 +186,10 @@ def _load_day(tile_paths: list[Path]):
 def load_spires(
     input_dir,
     target_date: date,
-    tiles: list[str],
+    west: float,
+    east: float,
+    south: float,
+    north: float,
 ):
     """
     Load SPIReS tiles for a single date, mosaic, and reproject to EPSG:4326.
@@ -180,20 +200,25 @@ def load_spires(
         Root directory containing one subdirectory per tile (e.g. 'h09v04/').
     target_date : date
         The date to load.
-    tiles : list of str
-        Tile identifiers to load (e.g. ['h09v04', 'h09v05']).
+    west, east : float
+        Longitude bounds in degrees (e.g. -125.0, -100.0).
+    south, north : float
+        Latitude bounds in degrees (e.g. 30.0, 50.0).
 
     Returns
     -------
     xarray.Dataset
         Dataset with dimensions (time, lat, lon) in EPSG:4326,
-        ready for regridding to a target grid.
+        clipped to the requested bounds and ready for regridding.
     """
+    tiles = _tiles_for_bounds(west, east, south, north)
+    log.info("Bounds (W=%.1f E=%.1f S=%.1f N=%.1f) → tiles: %s", west, east, south, north, tiles)
+
     tile_paths = _find_tile_files(Path(input_dir), tiles, target_date)
     if not tile_paths:
         raise ValueError(
             f"No SPIRES files found for date {target_date} "
-            f"in any of the requested tiles: {tiles}"
+            f"within bounds [{west}, {east}, {south}, {north}]"
         )
 
-    return _load_day(tile_paths)
+    return _load_day(tile_paths, west, east, south, north)

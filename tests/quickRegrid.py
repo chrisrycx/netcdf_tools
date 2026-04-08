@@ -14,5 +14,4 @@ regrid(
     output_file=output_file,
     data_type="spires",
     target_date=date(2025, 2, 1),
-    tiles=["h09v04", "h09v05"],
 )
