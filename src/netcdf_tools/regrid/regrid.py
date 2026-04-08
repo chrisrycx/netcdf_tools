@@ -12,6 +12,7 @@ import sys
 from pathlib import Path
 
 import numpy as np
+import xarray as xr
 
 
 def load_data(input_path, data_type, target_date=None, tiles=None):
@@ -68,7 +69,7 @@ def load_grid_spec(grid_json_path):
     return xr.Dataset({"lat": lat_centers, "lon": lon_centers})
 
 
-def regrid(input_file, grid_json, output_file, data_type=None, variables=None, method="conservative"):
+def regrid(input_file, grid_json, output_file, data_type=None, variables=None, method="conservative", target_date=None, tiles=None):
     """
     Regrid variables from input_file to the grid defined in grid_json.
 
@@ -86,6 +87,10 @@ def regrid(input_file, grid_json, output_file, data_type=None, variables=None, m
         Variables to regrid. If None, all non-coordinate data variables are regridded.
     method : str
         xesmf regridding method. Default is "conservative".
+    target_date : datetime.date, optional
+        Single date to load; required for 'spires'.
+    tiles : list of str, optional
+        Tile identifiers to load; required for 'spires' (e.g. ['h09v04', 'h09v05']).
     """
     try:
         import xesmf as xe
@@ -101,7 +106,7 @@ def regrid(input_file, grid_json, output_file, data_type=None, variables=None, m
     print(f"Output file: {output_file}")
     print(f"Method:      {method}")
 
-    ds_in = load_data(input_file, data_type)
+    ds_in = load_data(input_file, data_type, target_date=target_date, tiles=tiles)
     ds_out = load_grid_spec(grid_json)
 
     print(f"\nInput grid:  {len(ds_in.lat)} lat x {len(ds_in.lon)} lon")
@@ -124,7 +129,7 @@ def regrid(input_file, grid_json, output_file, data_type=None, variables=None, m
 
     regridder = xe.Regridder(ds_in, ds_out, method)
 
-    ds_regridded = regridder(ds_in[regrid_vars])
+    ds_regridded: xr.Dataset = regridder(ds_in[regrid_vars])  # type: ignore[assignment]
 
     for v in regrid_vars:
         ds_regridded[v].attrs = ds_in[v].attrs

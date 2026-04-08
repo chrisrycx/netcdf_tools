@@ -67,7 +67,7 @@ def _find_tile_files(input_dir: Path, tiles: list[str], target_date: date) -> li
     date_str = target_date.strftime("%Y%m%d")
     found: list[Path] = []
     for tile in tiles:
-        tile_dir = input_dir / tile
+        tile_dir = input_dir / tile / str(target_date.year)
         matches = sorted(tile_dir.glob(f"SPIRES_HIST_*_{date_str}_V*.nc"))
         if not matches:
             log.warning("No file found for tile %s on %s in %s", tile, target_date, tile_dir)
@@ -90,7 +90,7 @@ def _read_tile(path: Path):
             "Install with: pip install netcdf_tools[spires]"
         )
 
-    ds = xr.open_dataset(path, masked=True)
+    ds = xr.open_dataset(path, mask_and_scale=True)
     proj4 = str(ds["crs"].attrs["proj4"])
 
     arrays = {}
