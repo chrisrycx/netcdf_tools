@@ -219,6 +219,7 @@ def load_spires(
         raise ValueError(
             f"No SPIRES files found for date {target_date} "
             f"within bounds [{west}, {east}, {south}, {north}]"
+            f" Path: {input_dir}"
         )
 
     return _load_day(tile_paths, west, east, south, north)
