@@ -22,14 +22,14 @@ def process_single_date(args):
     Parameters
     ----------
     args : tuple
-        (date_obj, temp_dir, input_path, grid_json, west, east, south, north)
+        (date_obj, temp_dir, input_path, grid_json)
 
     Returns
     -------
     str
         Path to the output file for this date
     """
-    date_obj, temp_dir, input_path, grid_json, west, east, south, north = args
+    date_obj, temp_dir, input_path, grid_json = args
 
     # Create temporary output file
     output_file = os.path.join(temp_dir, f"regridded_{date_obj.strftime('%Y%m%d')}.nc")
@@ -41,7 +41,6 @@ def process_single_date(args):
             output_file=output_file,
             data_type="spires",
             target_date=date_obj,
-            west=west, east=east, south=south, north=north
         )
         print(f"✓ Completed {date_obj}")
         return output_file
@@ -55,7 +54,6 @@ def regrid_yearly_parallel(
     grid_json,
     output_file,
     year,
-    west, east, south, north,
     max_workers=None
 ):
     """
@@ -71,8 +69,6 @@ def regrid_yearly_parallel(
         Path for final yearly output file
     year : int
         Year to process
-    west, east, south, north : float
-        Spatial bounds in degrees
     max_workers : int, optional
         Number of parallel workers (defaults to CPU count)
     """
@@ -91,7 +87,7 @@ def regrid_yearly_parallel(
 
         # Prepare arguments for each date
         args_list = [
-            (date_obj, temp_dir, input_path, grid_json, west, east, south, north)
+            (date_obj, temp_dir, input_path, grid_json)
             for date_obj in dates
         ]
 
@@ -156,13 +152,9 @@ if __name__ == "__main__":
     # Example usage - modify these paths and parameters for your setup
 
     # Configuration
-    spires_path = "/home/chriscox/Data/MODIS/SPIRES/"
+    spires_path = "/mnt/c/Users/clmbn/NMT_PhD/data/MODIS/SPIRES/raw"
     grid_json = "./grids/e3sm0125.json"
     output_file = "./yearly_regridded_2025.nc"
-
-    # Spatial bounds (example for a region)
-    west, east = -180, 180      # Full longitude range
-    south, north = -90, 90      # Full latitude range
 
     # Process year 2025 with 4 workers (adjust as needed)
     regrid_yearly_parallel(
@@ -170,6 +162,5 @@ if __name__ == "__main__":
         grid_json=grid_json,
         output_file=output_file,
         year=2025,
-        west=west, east=east, south=south, north=north,
-        max_workers=4  # Use 4 cores, adjust based on your machine
+        max_workers=1  # Use 4 cores, adjust based on your machine
     )

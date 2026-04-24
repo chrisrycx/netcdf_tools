@@ -4,8 +4,8 @@ Quick test of regrid pipeline using SPIRES data.
 from datetime import date
 from netcdf_tools.regrid.regrid import regrid
 
-#spires_path = "/mnt/c/Users/clmbn/NMT_PhD/data/MODIS/SPIRES/raw/"
-spires_path = "/home/chriscox/Data/MODIS/SPIRES/"
+spires_path = "/mnt/c/Users/clmbn/NMT_PhD/data/MODIS/SPIRES/raw/"
+#spires_path = "/home/chriscox/Data/MODIS/SPIRES/"
 grid_json = "./grids/e3sm0125.json"
 output_file = "./tests/spires_regridded_test.nc"
 
