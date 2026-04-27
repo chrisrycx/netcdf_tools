@@ -7,6 +7,7 @@ to the lat/lon grid defined by a JSON grid spec using xesmf.
 Install extra dependencies with: pip install netcdf_tools[regrid]
 """
 
+import gc
 import json
 import sys
 from pathlib import Path
@@ -152,6 +153,10 @@ def regrid(input_file, grid_json, output_file, data_type=None, variables=None, m
     ds_regridded.attrs["input"] = str(Path(input_file).name)
 
     ds_regridded.to_netcdf(output_file)
+    ds_in.close()
+    ds_regridded.close()
+    del regridder
+    gc.collect()
     print(f"\nDone. Written to {output_file}")
 
 

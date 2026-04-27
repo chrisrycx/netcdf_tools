@@ -4,6 +4,7 @@ Parallel yearly regridding script using multiprocessing with temporary storage.
 Processes each date in parallel and merges into a single yearly output file.
 """
 
+import argparse
 import os
 import tempfile
 import shutil
@@ -13,6 +14,8 @@ from pathlib import Path
 
 import xarray as xr
 from netcdf_tools.regrid.regrid import regrid
+from dotenv import load_dotenv
+load_dotenv()
 
 
 def process_single_date(args):
@@ -54,7 +57,8 @@ def regrid_yearly_parallel(
     grid_json,
     output_file,
     year,
-    max_workers=None
+    max_workers=None,
+    debug=False,
 ):
     """
     Regrid a full year of data using parallel processing with temporary storage.
@@ -77,6 +81,11 @@ def regrid_yearly_parallel(
     start_date = date(year, 1, 1)
     end_date = date(year, 12, 31)
     dates = [start_date + timedelta(days=i) for i in range((end_date - start_date).days + 1)]
+
+    if debug:
+        dates = dates[:2]
+        max_workers = 1
+        print(f"DEBUG MODE: processing {len(dates)} dates with 1 worker")
 
     print(f"Processing {len(dates)} dates for year {year}")
     print(f"Using {max_workers or os.cpu_count()} parallel workers")
@@ -149,18 +158,19 @@ def regrid_yearly_parallel(
 
 
 if __name__ == "__main__":
-    # Example usage - modify these paths and parameters for your setup
+    parser = argparse.ArgumentParser(description="Parallel yearly SPIRES regridding")
+    parser.add_argument("--debug", action="store_true", help="Run with 1 worker and 2 dates for login-node testing")
+    args = parser.parse_args()
 
-    # Configuration
-    spires_path = "/mnt/c/Users/clmbn/NMT_PhD/data/MODIS/SPIRES/raw"
+    spires_path = os.getenv('SPIRES_PATH')
     grid_json = "./grids/e3sm0125.json"
-    output_file = "./yearly_regridded_2025.nc"
+    output_file = "/pscratch/sd/c/chriscox/regriddingtests/yearly_regridded_2025_test.nc"
 
-    # Process year 2025 with 4 workers (adjust as needed)
     regrid_yearly_parallel(
         input_path=spires_path,
         grid_json=grid_json,
         output_file=output_file,
         year=2025,
-        max_workers=1  # Use 4 cores, adjust based on your machine
+        max_workers=40,
+        debug=args.debug,
     )
